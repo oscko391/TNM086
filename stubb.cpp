@@ -10,6 +10,12 @@
 #include <osgDB/ReadFile>
 #include <osg/PositionAttitudeTransform>
 #include <osg/StateSet>
+#include <osgUtil/Simplifier>
+#include <osgUtil/LineSegmentIntersector>
+#include <osg/AnimationPath>
+#include <osg/MatrixTransform>
+
+
 
 
 
@@ -20,8 +26,8 @@ int main(int argc, char *argv[]){
 #if 1
   /// Line ---
 
-  osg::Vec3 line_p0 (-1, 0, 0);
-  osg::Vec3 line_p1 ( 1, 0, 0);
+  osg::Vec3 line_p0 (10, -30, 0);
+  osg::Vec3 line_p1 ( 10, 30, 0);
   
   osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array();
   vertices->push_back(line_p0);
@@ -80,64 +86,109 @@ int main(int argc, char *argv[]){
   osg::ref_ptr<osg::Node> cessnaNode = NULL;
   
   gliderNode = osgDB::readNodeFile("glider.osg");
+  
   cessnaNode = osgDB::readNodeFile("cessna.osg");
   
+   //simplifier LOD cessna
+  float sampleRatio = 0.5f;
+  osgUtil::Simplifier simplifier(sampleRatio);
+  osg::ref_ptr<osg::Node> cessnaLowerDet = 
+        dynamic_cast<osg::Node*>(cessnaNode->clone(osg::CopyOp::DEEP_COPY_ALL));
+    
+  cessnaLowerDet->accept(simplifier);
+  
+  osg::ref_ptr<osg::Node> cessnaEvenLowerDet = 
+        dynamic_cast<osg::Node*>(cessnaNode->clone(osg::CopyOp::DEEP_COPY_ALL));
+
+  simplifier.setSampleRatio(0.1);
+  cessnaEvenLowerDet->accept(simplifier);
+  
+  //set up LOD nodes
+  osg::ref_ptr<osg::LOD> cessnaLOD = new osg::LOD();
+  cessnaLOD->setRangeMode(osg::LOD::DISTANCE_FROM_EYE_POINT);
+  cessnaLOD->addChild(cessnaNode, 0.0, 50.0); 
+  cessnaLOD->addChild(cessnaLowerDet, 50.0, 65.0);
+  cessnaLOD->addChild(cessnaEvenLowerDet, 65.0, 99999.0);
+  
+  // transform
   osg::ref_ptr<osg::PositionAttitudeTransform> gliderTransform =   new osg::PositionAttitudeTransform();
   
-  root->addChild(gliderTransform);
+  
     gliderTransform->addChild(gliderNode);
     
-    osg::Vec3 gliderPosit(3, 4, 4);
+    osg::Vec3 gliderPosit(5, -10, 20);
     gliderTransform->setPosition(gliderPosit);
-    gliderTransform->setScale(osg::Vec3(3.0, 3.0, 3.0));
+    gliderTransform->setScale(osg::Vec3(5.0, 5.0, 5.0));
+    
+    //Animation
+    osg::ref_ptr<osg::AnimationPath> animationPath = new osg::AnimationPath;
+    animationPath->setLoopMode(osg::AnimationPath::LOOP);
+    int numberOfSamples = 40;
+    float time = 0.0f;
+    float deltaTime = 10.0f / (float)numberOfSamples;
+    
+    for (int i = 0; i < numberOfSamples; i++)
+    {
+        osg::Vec3 position(gliderPosit[0] + 10.0 * cosf(time), gliderPosit[1] + 10.0 * sinf(time), 0.0f); 
+        animationPath->insert(time, osg::AnimationPath::ControlPoint(position));
+        time += deltaTime;
+    }
+    
+    gliderTransform->setUpdateCallback(new osg::AnimationPathCallback(animationPath, 0.0, 1.0));
+    root->addChild(gliderTransform);
     
     //cessna transform
     osg::ref_ptr<osg::PositionAttitudeTransform> cessnaTransform =   new osg::PositionAttitudeTransform();
   
     root->addChild(cessnaTransform);
-    cessnaTransform->addChild(cessnaNode);
+    cessnaTransform->addChild(cessnaLOD);
     
     osg::Vec3 cessnaPosit(10, 10, 5);
     cessnaTransform->setPosition(cessnaPosit);
-    cessnaTransform->setScale(osg::Vec3(0.2, 0.2, 0.2));
+    cessnaTransform->setScale(osg::Vec3(0.5, 0.5, 0.5));
     
     //lights
+    osg::StateSet* lightStateSet = root->getOrCreateStateSet();
+    //light1
     osg::ref_ptr<osg::Light> light1 = new osg::Light();
     light1->setLightNum(0);
-    light1->setPosition(osg::Vec4(0.0, 0.0, 0.0, 1.0));
-    osg::Vec4 red = osg::Vec4(1.0, 0.0, 0.0, 1.0);
-    light1->setDiffuse(red);
-    light1->setSpecular(osg::Vec4(1.0, 1.0, 1.0, 1.0));
-    light1->setAmbient(osg::Vec4(0.9,0.2,0.0,1.0));
+    osg::ref_ptr<osg::LightSource> lightSrc1 = new osg::LightSource();
+    light1->setPosition(osg::Vec4(0.0, 0.0, 50.0, 1.0));
+    light1->setDiffuse(osg::Vec4(0.0, 1.0, 0.0, 1.0));
+    lightSrc1->setLight(light1);
+    lightSrc1->setStateSetModes(*lightStateSet, osg::StateAttribute::ON);
     
-    osg::ref_ptr<osg::Geode> lightMarker[1];
-    osg::ref_ptr<osg::LightSource> lightSource[1];
     
-    osg::StateSet *lightStateSet;
-    osg::PositionAttitudeTransform *lightTransform[1];
+    // animate light
+    osg::ref_ptr<osg::AnimationPath> lightAnimation = new osg::AnimationPath;
+    lightAnimation->setLoopMode(osg::AnimationPath::LOOP);
+    time = 0.0f;
     
-    for (int i = 0; i < 1; i++)
+    for (int i = 0; i < numberOfSamples; i++)
     {
-        lightMarker[i] = new osg::Geode();
-        lightMarker[i]->addDrawable(new osg::ShapeDrawable(new 
-        osg::Sphere(osg::Vec3(), 1)));
-        
-        lightSource[i] = new osg::LightSource();
-        lightSource[i]->setLight(light1);
-        lightSource[i]->setLocalStateSetModes(osg::StateAttribute::ON);
-        lightSource[i]->setStateSetModes(*lightStateSet, osg::StateAttribute::ON);
-        
-        lightTransform[i] = new osg::PositionAttitudeTransform();
-        lightTransform[i]->addChild(lightSource[i]);
-        lightTransform[i]->addChild(lightMarker[i]);
-        lightTransform[i]->setPosition(osg::Vec3(0,0,5));
-        lightTransform[i]->setScale(osg::Vec3(0.1,0.1,0.1)); 
-        
-        root->addChild(lightTransform[i]);
-        
+        osg::Vec3 position( 10.0*cosf(time*5.0), 10.0*sinf(time*5.0), 0.0f); 
+        lightAnimation->insert(time, osg::AnimationPath::ControlPoint(position));
+        time += deltaTime;
     }
     
+    osg::ref_ptr<osg::MatrixTransform> light1T = new osg::MatrixTransform;
+    light1T->setUpdateCallback(new osg::AnimationPathCallback(lightAnimation, 0.0, 1.0));
+    light1T->addChild(lightSrc1);
+    root->addChild(light1T);
     
+    
+    //light2
+    osg::ref_ptr<osg::Light> light2 = new osg::Light();
+    light2->setLightNum(1);
+    osg::ref_ptr<osg::LightSource> lightSrc2 = new osg::LightSource();
+    light2->setPosition(osg::Vec4(20.0, 0.0, 50.0, 1.0));
+    light2->setDiffuse(osg::Vec4(1.0, 0.0,0.0, 1.0));
+    lightSrc2->setLight(light2);
+    lightSrc2->setStateSetModes(*lightStateSet, osg::StateAttribute::ON);
+    root->addChild(lightSrc2);
+    
+    //intersector
+
   
 #endif
 
