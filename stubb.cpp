@@ -12,11 +12,62 @@
 #include <osg/StateSet>
 #include <osgUtil/Simplifier>
 #include <osgUtil/LineSegmentIntersector>
+#include <osgUtil/IntersectionVisitor>
 #include <osg/AnimationPath>
 #include <osg/MatrixTransform>
 
 
 
+class IntersectRef : public osg::Referenced 
+{
+public:
+  IntersectRef(osgUtil::IntersectionVisitor iv, osg::PositionAttitudeTransform* _model, osg::Light* l)
+  {
+    this->iv = iv;
+    this->model = _model;
+    this->light = l;
+  }
+        
+  osgUtil::IntersectionVisitor getVisitor()  { return this->iv; }
+
+  osg::Light* getLight() { return this->light; }
+  osg::PositionAttitudeTransform* getModel() { return this->model; }
+
+protected:
+  osgUtil::IntersectionVisitor iv;
+  osg::Group* root;
+  osg::PositionAttitudeTransform* model;
+  osg::Light* light;
+};
+
+class IntersectCallback : public osg::NodeCallback 
+{
+public:
+  virtual void operator()(osg::Node* node, osg::NodeVisitor* nv)
+  {
+    osg::ref_ptr<IntersectRef> intersectRef = 
+      dynamic_cast<IntersectRef*>(node->getUserData());
+    
+    osgUtil::IntersectionVisitor visitor = intersectRef->getVisitor();
+    node->accept(visitor);
+    osg::ref_ptr<osgUtil::Intersector> lsi = visitor.getIntersector();
+    
+    if(lsi->containsIntersections())
+    {
+       std::cout<<"INTERSECTION!" << std::endl;
+      intersectRef->getLight()->setDiffuse(osg::Vec4(0,0,1,1));
+      intersectRef->getModel()->setPosition(osg::Vec3(10,10,10));
+    }
+    else
+    {
+        intersectRef->getLight()->setDiffuse(osg::Vec4(0,1,0,1));
+        intersectRef->getModel()->setPosition(osg::Vec3(10,10,5));
+    }
+    
+    lsi->reset();
+    traverse(node,nv);
+  }
+};
 
 
 int main(int argc, char *argv[]){
@@ -27,7 +78,7 @@ int main(int argc, char *argv[]){
   /// Line ---
 
   osg::Vec3 line_p0 (10, -30, 0);
-  osg::Vec3 line_p1 ( 10, 30, 0);
+  osg::Vec3 line_p1 ( 10, 0, 0);
   
   osg::ref_ptr<osg::Vec3Array> vertices = new osg::Vec3Array();
   vertices->push_back(line_p0);
@@ -116,9 +167,10 @@ int main(int argc, char *argv[]){
   
     gliderTransform->addChild(gliderNode);
     
-    osg::Vec3 gliderPosit(5, -10, 20);
+    osg::Vec3 gliderPosit(10, -10, 20);
+    root->addChild(gliderTransform);
     gliderTransform->setPosition(gliderPosit);
-    gliderTransform->setScale(osg::Vec3(5.0, 5.0, 5.0));
+    //gliderTransform->setScale(osg::Vec3(10.0, 10.0, 10.0));
     
     //Animation
     osg::ref_ptr<osg::AnimationPath> animationPath = new osg::AnimationPath;
@@ -133,9 +185,8 @@ int main(int argc, char *argv[]){
         animationPath->insert(time, osg::AnimationPath::ControlPoint(position));
         time += deltaTime;
     }
-    
     gliderTransform->setUpdateCallback(new osg::AnimationPathCallback(animationPath, 0.0, 1.0));
-    root->addChild(gliderTransform);
+    
     
     //cessna transform
     osg::ref_ptr<osg::PositionAttitudeTransform> cessnaTransform =   new osg::PositionAttitudeTransform();
@@ -188,7 +239,13 @@ int main(int argc, char *argv[]){
     root->addChild(lightSrc2);
     
     //intersector
-
+    osg::ref_ptr<osgUtil::LineSegmentIntersector> intersector = new osgUtil::LineSegmentIntersector(line_p0, line_p1);
+    
+    osgUtil::IntersectionVisitor intersectVisitor;
+    intersectVisitor.setIntersector(intersector);
+    osg::ref_ptr<IntersectCallback> intersectCallback = new IntersectCallback();
+    root->setUserData( new IntersectRef(intersectVisitor, cessnaTransform, light1));
+    root->addUpdateCallback(intersectCallback);
   
 #endif
 
